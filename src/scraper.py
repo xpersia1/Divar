@@ -6,7 +6,7 @@ import pandas as pd  # تحلیل داده و کار با DataFrame
 import numpy as np  # عملیات ریاضی و آماری
 import matplotlib.pyplot as plt  # رسم نمودار
 import seaborn as sns  # زیباسازی نمودارهای matplotlib
-
+import random
 # کتابخانه‌های selenium برای اتوماسیون مرورگر
 from selenium import webdriver  # برای کنترل مرورگر کروم
 from selenium.webdriver.common.by import By  # برای انتخاب المنت‌ها
@@ -33,10 +33,11 @@ def suppress_warnings():
 suppress_warnings()
 
 
-# ⚙️ تنظیمات اولیه مرورگر کروم
+#⚙️ تنظیمات اولیه مرورگر کروم
 
 def setup_driver():
     chrome_options = Options()
+
     chrome_options.add_argument('--no-sandbox')  # جلوگیری از ارور در برخی سیستم‌ها
     chrome_options.add_argument('--disable-dev-shm-usage')  # برای جلوگیری از محدودیت فضای اشتراکی
     # معرفی User-Agent معتبر برای دور زدن ربات‌دیتکشن
@@ -47,6 +48,7 @@ def setup_driver():
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
     driver.set_window_size(1920, 1080)  # تعیین اندازه پنجره مرورگر
     driver.maximize_window()  # تمام‌صفحه کردن مرورگر
+    driver.execute_cdp_cmd('Emulation.setPageScaleFactor', {'pageScaleFactor': 0.5})
 
     # اطلاعات ساختگی برای مخفی‌کاری بیشتر
     stealth(driver,
@@ -69,57 +71,73 @@ def convert_price(price_text):
         return None
 
 
-# 📜 اسکرول خودکار همراه با استخراج همزمان آگهی‌ها
 
-def scroll_and_collect_ads(driver, pause_time=4, scroll_step=1000, max_tries=40, max_time=90):
+# 📜 اسکرول خودکار همراه با کلیک روی دکمه "بستن نقشه" و استخراج آگهی‌ها
+
+def scroll_and_collect_ads(driver, pause_time=4, max_tries=40, max_time=90):
     start_time = time.time()
     tries = 0
     last_ad_count = 0
-    processed_links = set()  # لینک‌های دیده شده برای حذف تکراری‌ها
-    data = []  # لیست نهایی آگهی‌ها
+    processed_links = set()
+    data = []
+
+    # 💡 کلیک روی دکمه "بستن نقشه"
+    try:
+        close_map_button = driver.find_element(By.CLASS_NAME, 'absolute-c06f1')
+        close_map_button.click()
+        print("🗺️ نقشه بسته شد.")
+        time.sleep(2)
+    except NoSuchElementException:
+        print("⚠️ دکمه بستن نقشه پیدا نشد.")
 
     body = driver.find_element(By.TAG_NAME, 'body')
     actions = ActionChains(driver)
 
     while tries < max_tries and time.time() - start_time < max_time:
-        # اسکرول نرم و تدریجی
+        scroll_step = random.randint(100, 999)  # 🎲 مقدار تصادفی برای اسکرول
         scroll_origin = ScrollOrigin.from_element(body)
         actions.scroll_from_origin(scroll_origin, 0, scroll_step).perform()
+        print(f"⬇️ اسکرول با مقدار: {scroll_step}")
         time.sleep(pause_time)
 
-        ads = driver.find_elements(By.CSS_SELECTOR, 'article.unsafe-kt-post-card')
-        print(f"\U0001F4CA آگهی‌های موجود در DOM: {len(ads)}")
+        ads = driver.find_elements(By.CSS_SELECTOR, 'article.kt-post-card')
+        print(f"🟡 تعداد آگهی‌ها پیدا شده: {len(ads)}")
 
         for ad in ads:
             try:
-                link = ad.find_element(By.CSS_SELECTOR, 'a.unsafe-kt-post-card__action').get_attribute('href')
-                if link in processed_links:
-                    continue  # تکراری‌ها حذف شوند
-
-                title = ad.find_element(By.CSS_SELECTOR, 'h2.unsafe-kt-post-card__title').text
-                price = ad.find_element(By.CSS_SELECTOR, 'div.unsafe-kt-post-card__description').text
-                location = ad.find_element(By.CSS_SELECTOR, 'span.unsafe-kt-post-card__bottom-description').text
+                link = ad.find_element(By.CSS_SELECTOR, 'a.kt-post-card__action').get_attribute('href')
+                title = ad.find_element(By.CSS_SELECTOR, 'h2.kt-post-card__title').text
+                price = ad.find_element(By.CSS_SELECTOR, 'div.kt-post-card__description').text
+                location = ad.find_element(By.CSS_SELECTOR, 'span.kt-post-card__bottom-description').text
                 price_value = convert_price(price)
+
+                # 🎯 استخراج تصویر آگهی
+                try:
+                    img_tag = ad.find_element(By.CSS_SELECTOR, 'img.kt-image-block__image')
+                    image_url = img_tag.get_attribute('data-src') or img_tag.get_attribute('src')
+                except:
+                    image_url = None
 
                 data.append({
                     'عنوان': title,
                     'قیمت': price_value,
                     'محله': location,
-                    'لینک': link
+                    'تصویر': image_url,
+                    'لینک': f"https://divar.ir{link}"
                 })
                 processed_links.add(link)
-                print(f"📝 آگهی: {title}, قیمت: {price_value}, محله: {location}")
-            except:
+                print(f"🖼️ آگهی: {title} | قیمت: {price_value} | موقعیت: {location} | تصویر: {image_url}")
+            except Exception as e:
+                print(f"⚠️ خطا در استخراج یک آگهی: {e}")
                 continue
 
-        # توقف در صورت عدم تغییر آگهی
         if len(ads) == last_ad_count:
             tries += 1
         else:
             tries = 0
         last_ad_count = len(ads)
 
-    print(f"✅ اسکرول و جمع‌آوری کامل شد. تعداد آگهی‌ها: {len(data)}")
+    print(f"✅ جمع‌آوری کامل شد. تعداد نهایی آگهی‌ها: {len(data)}")
     return data
 
 
